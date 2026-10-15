@@ -23,4 +23,4 @@ The complete training pipeline and experimental datasets are not included in thi
 
 If you find this work useful, please cite:
 
-M. Wang, B. Liu, J. Ji, C. Yan, X. Zhang, and Y. Wang, "A multi-prototype structure constrained class-incremental method for compound fault diagnosis of rolling bearings," *Measurement Science and Technology*, 2026.
+"A multi-prototype structure constrained class-incremental method for compound fault diagnosis of rolling bearings," *Measurement Science and Technology*, 2026.
