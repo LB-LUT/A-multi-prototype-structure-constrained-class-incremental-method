@@ -1,0 +1,81 @@
+class MultiPrototypeHead(nn.Module):
+    def __init__(self, num_classes, emb_dim, k_proto, temp_scale=12.0, tau=10.0):
+        super().__init__()
+        self.num_classes = num_classes
+        self.emb_dim = emb_dim
+        self.k_proto = k_proto
+        self.temp_scale = temp_scale
+        self.tau = tau
+        proto = torch.randn(num_classes, k_proto, emb_dim)
+        proto = F.normalize(proto, p=2, dim=-1)
+        self.prototypes = nn.Parameter(proto)
+
+    def normalized_prototypes(self):
+        return F.normalize(self.prototypes, p=2, dim=-1)
+
+    def pairwise_dist(self, z):
+        P = self.normalized_prototypes()
+        z_exp = z.unsqueeze(1).unsqueeze(2)
+        p_exp = P.unsqueeze(0)
+        d2 = ((z_exp - p_exp) ** 2).sum(dim=-1)
+        return d2
+
+    def forward(self, z):
+        d2 = self.pairwise_dist(z)
+        min_d2, _ = d2.min(dim=2)
+        logits = -self.temp_scale * min_d2
+        return logits, d2
+
+    def prototype_separation_loss(self, active_classes, margin=0.50):
+        P = self.normalized_prototypes()[active_classes]
+        Ca, K, D = P.shape
+        P_flat = P.reshape(Ca * K, D)
+        lab = []
+        for ci in range(Ca):
+            lab.extend([ci] * K)
+        lab = torch.tensor(lab, device=P.device)
+
+        sim = P_flat @ P_flat.t()
+        losses = []
+        for i in range(Ca * K):
+            for j in range(i + 1, Ca * K):
+                if lab[i] != lab[j]:
+                    losses.append(F.relu(sim[i, j] - margin))
+        if len(losses) == 0:
+            return torch.tensor(0.0, device=P.device)
+        return torch.stack(losses).mean()
+
+    def centroid(self, class_ids):
+        P = self.normalized_prototypes()[class_ids]   
+        return F.normalize(P.mean(dim=1), p=2, dim=1)
+
+
+class PairLocalHead(nn.Module):
+    def __init__(self, emb_dim=128, hidden=64):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(emb_dim, hidden),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.1),
+            nn.Linear(hidden, 2)
+        )
+
+    def forward(self, z):
+        return self.net(z)
+
+
+class FullModel(nn.Module):
+    def __init__(self, num_classes=8, emb_dim=128, k_proto=3):
+        super().__init__()
+        self.backbone = CNNBackbone(emb_dim=emb_dim, dropout=DROPOUT)
+        self.global_head = MultiPrototypeHead(num_classes, emb_dim, k_proto, TEMP_SCALE, SOFT_ASSIGN_TAU)
+        self.local_heads = nn.ModuleDict()
+
+    def forward(self, x):
+        z = self.backbone(x)
+        logits, d2 = self.global_head(z)
+        return z, logits, d2
+
+    def ensure_local_head(self, group_name, emb_dim=128, hidden=64):
+        if group_name not in self.local_heads:
+            self.local_heads[group_name] = PairLocalHead(emb_dim=emb_dim, hidden=hidden).to(next(self.parameters()).device)
